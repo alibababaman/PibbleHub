@@ -822,6 +822,10 @@ local function runHub()
                 return false, "Sky Quarry arrival timed out"
             end
 
+            statusL.Text = "Teleporting to Crystal Cavern..."
+            root.CFrame = cavernEntry
+            root.AssemblyLinearVelocity = Vector3.zero
+            root.AssemblyAngularVelocity = Vector3.zero
             statusL.Text = "Entering Crystal Cavern..."
             deadline = os.clock() + 8
             local entryPrompt
@@ -851,13 +855,6 @@ local function runHub()
             if not activated then return false, "Crystal Cavern prompt failed" end
 
             task.wait(1)
-            if not shouldContinue() then return false end
-            root = getHRP()
-            if not root then return false, "Character unavailable" end
-            root.CFrame = cavernEntry
-            root.AssemblyLinearVelocity = Vector3.zero
-            root.AssemblyAngularVelocity = Vector3.zero
-            task.wait(0.5)
             return shouldContinue()
         end
 
