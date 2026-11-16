@@ -801,7 +801,7 @@ local function runHub()
 
         local cavernEntry = CFrame.new(6820, 249.999939, -54000, 1, 0, 0, 0, 1, 0, 0, 0, 1)
 
-        local function enterCavern()
+        local function enterCavern(enableMine)
             local root = getHRP()
             if not root then return false, "Character unavailable" end
             local origin = root.Position
@@ -860,6 +860,7 @@ local function runHub()
             if not activated then return false, "Crystal Cavern prompt failed" end
 
             task.wait(1)
+            if not enableMine then return shouldContinue() end
             deadline = os.clock() + 5
             repeat
                 if not shouldContinue() then return false end
@@ -891,7 +892,7 @@ local function runHub()
             running, pending = true, true
             startBtn.Text = "Stop Auto Mine"
 
-            local entered, message = enterCavern()
+            local entered, message = enterCavern(true)
             if not entered then
                 statusL.Text = running and (message or "Cavern entry failed") or "Auto Mine stopped"
                 running, pending = false, false
@@ -904,11 +905,23 @@ local function runHub()
             local waitForOre
             local veinId
             local lastVeinId
+            local wasPaused = false
 
             while running and gui.Parent do
                 if Raid.running or Boss.active or Tower.auto or Dungeon.active then
                     statusL.Text = "Auto Mine paused during battle"
                     vein = nil
+                    wasPaused = true
+                elseif wasPaused then
+                    statusL.Text = "Restarting mine teleport route..."
+                    local reentered, retryMessage = enterCavern(false)
+                    if reentered then
+                        wasPaused = false
+                        lastVeinId = nil
+                    else
+                        statusL.Text = retryMessage or "Retrying mine teleport route"
+                        task.wait(1)
+                    end
                 elseif vein and os.clock() - arrival < waitForOre then
                     statusL.Text = "Mining vein " .. veinId
                 else
