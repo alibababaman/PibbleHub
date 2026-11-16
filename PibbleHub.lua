@@ -674,6 +674,7 @@ local function runHub()
         end
     end
 
+    local teleportToIsland
     do
         local destinations = {"Abandoned Island", "Twin Beaches", "Windmill Isle", "Sky Quarry"}
         local openBtn = button("Island Teleports", 10, 752, 230, 18, DARK)
@@ -724,6 +725,33 @@ local function runHub()
             return nil
         end
 
+        teleportToIsland = function(name, shouldContinue)
+            local target = islandButton(name)
+            if not target then
+                local tab = visibleButton("islands")
+                if not tab then
+                    local opener = findButton(function(t)
+                        return t == "worlds" or t == "world" or t == "teleport"
+                    end)
+                    if opener and shown(opener) and activateButton(opener) then
+                        task.wait(0.35)
+                        tab = visibleButton("islands")
+                    end
+                end
+                if tab and activateButton(tab) then
+                    for _ = 1, 10 do
+                        task.wait(0.15)
+                        if shouldContinue and not shouldContinue() then return false end
+                        target = islandButton(name)
+                        if target then break end
+                    end
+                end
+            end
+            if shouldContinue and not shouldContinue() then return false end
+            return target ~= nil and activateButton(target)
+        end
+
+
         local busy = false
         openBtn.Activated:Connect(function() menu.Visible = not menu.Visible end)
         for i, name in ipairs(destinations) do
@@ -732,27 +760,7 @@ local function runHub()
                 if busy then return end
                 busy = true
                 status.Text = ""
-                local target = islandButton(name)
-                if not target then
-                    local tab = visibleButton("islands")
-                    if not tab then
-                        local opener = findButton(function(t)
-                            return t == "worlds" or t == "world" or t == "teleport"
-                        end)
-                        if opener and shown(opener) and activateButton(opener) then
-                            task.wait(0.35)
-                            tab = visibleButton("islands")
-                        end
-                    end
-                    if tab and activateButton(tab) then
-                        for _ = 1, 10 do
-                            task.wait(0.15)
-                            target = islandButton(name)
-                            if target then break end
-                        end
-                    end
-                end
-                if target and activateButton(target) then
+                if teleportToIsland(name) then
                     menu.Visible = false
                 else
                     status.Text = "Open the game's Islands tab"
@@ -791,6 +799,69 @@ local function runHub()
             skyBtn.Text = skyCrystal and "☑ Sky Crystal" or "☐ Sky Crystal"
         end)
 
+        local cavernEntry = CFrame.new(6820, 249.999939, -54000, 1, 0, 0, 0, 1, 0, 0, 0, 1)
+
+        local function enterCavern()
+            local root = getHRP()
+            if not root then return false, "Character unavailable" end
+            local origin = root.Position
+            local function shouldContinue() return running and gui.Parent ~= nil end
+
+            statusL.Text = "Teleporting to Sky Quarry..."
+            if not teleportToIsland("Sky Quarry", shouldContinue) then
+                return false, "Open Islands and retry"
+            end
+
+            local deadline = os.clock() + 12
+            repeat
+                task.wait(0.15)
+                if not shouldContinue() then return false end
+                root = getHRP()
+            until (root and (root.Position - origin).Magnitude >= 25) or os.clock() >= deadline
+            if not root or (root.Position - origin).Magnitude < 25 then
+                return false, "Sky Quarry arrival timed out"
+            end
+
+            statusL.Text = "Entering Crystal Cavern..."
+            deadline = os.clock() + 8
+            local entryPrompt
+            repeat
+                if not shouldContinue() then return false end
+                for _, instance in ipairs(workspace:GetDescendants()) do
+                    if instance:IsA("ProximityPrompt") and instance.Enabled
+                        and clean(instance.ObjectText):lower() == "crystal cavern"
+                        and clean(instance.ActionText):lower() == "enter" then
+                        entryPrompt = instance
+                        break
+                    end
+                end
+                if not entryPrompt then task.wait(0.4) end
+            until entryPrompt or os.clock() >= deadline
+            if not entryPrompt then return false, "Crystal Cavern prompt not found" end
+
+            local activated = pcall(function()
+                if typeof(fireproximityprompt) == "function" then
+                    fireproximityprompt(entryPrompt)
+                else
+                    entryPrompt:InputHoldBegin()
+                    task.wait(entryPrompt.HoldDuration)
+                    entryPrompt:InputHoldEnd()
+                end
+            end)
+            if not activated then return false, "Crystal Cavern prompt failed" end
+
+            task.wait(1)
+            if not shouldContinue() then return false end
+            root = getHRP()
+            if not root then return false, "Character unavailable" end
+            root.CFrame = cavernEntry
+            root.AssemblyLinearVelocity = Vector3.zero
+            root.AssemblyAngularVelocity = Vector3.zero
+            task.wait(0.5)
+            return shouldContinue()
+        end
+
+
         startBtn.Activated:Connect(function()
             if running then
                 running = false
@@ -805,6 +876,14 @@ local function runHub()
 
             running, pending = true, true
             startBtn.Text = "Stop Auto Mine"
+
+            local entered, message = enterCavern()
+            if not entered then
+                statusL.Text = running and (message or "Cavern entry failed") or "Auto Mine stopped"
+                running, pending = false, false
+                startBtn.Text = "Start Auto Mine"
+                return
+            end
 
             local vein
             local arrival
