@@ -1,136 +1,3 @@
--- Use this source as a LocalScript in StarterPlayerScripts for the hub UI.
--- Use the same source as a Script in ServerScriptService for Auto Mine.
--- Auto Mine calls ServerScriptService.MineVein for one server-side mining action.
-if game:GetService("RunService"):IsServer() then
-    local CollectionService = game:GetService("CollectionService")
-    local Players = game:GetService("Players")
-    local ReplicatedStorage = game:GetService("ReplicatedStorage")
-    local ServerScriptService = game:GetService("ServerScriptService")
-
-    local titaniumIds = {6, 83, 2, 68, 5, 73, 74, 3, 8, 54, 1, 45}
-    local skyCrystalIds = {4, 61, 56, 72, 85, 87, 86, 47, 42, 66, 44, 78, 48}
-    local inFlight = {}
-    local lastRequest = {}
-    local depletedByPlayer = {}
-
-    Players.PlayerRemoving:Connect(function(player)
-        inFlight[player] = nil
-        lastRequest[player] = nil
-        depletedByPlayer[player] = nil
-    end)
-
-    local function miningStep(player, titanium, skyCrystal, currentId)
-        -- MineVein must return a function (player, node) -> depleted.
-        -- Perform one mining action through the game's server mining logic.
-        -- Return true when depleted, or false when the node should be tried again.
-        local handler = ServerScriptService:FindFirstChild("MineVein")
-        if not handler or not handler:IsA("ModuleScript") then
-            return nil, "MineVein module is missing"
-        end
-        local mineVein = require(handler)
-        if type(mineVein) ~= "function" then
-            return nil, "MineVein must return a function"
-        end
-
-        local character = player.Character
-        local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-        local root = character and character:FindFirstChild("HumanoidRootPart")
-        if not humanoid or humanoid.Health <= 0 or humanoid.SeatPart or not root then
-            return false, "Waiting for your character"
-        end
-
-        local maps = workspace:FindFirstChild("Maps")
-        local cavern = maps and maps:FindFirstChild("CrystalCavern")
-        local folder = cavern and cavern:FindFirstChild("MiningNodes")
-        if not folder then return false, "Waiting for MiningNodes" end
-
-        local nodes = {}
-        for _, node in ipairs(folder:GetChildren()) do
-            local id = node:GetAttribute("VeinId")
-            if node:IsA("Model") and type(id) == "number" then
-                nodes[id] = node
-            end
-        end
-
-        local depletedNodes = depletedByPlayer[player]
-        if not depletedNodes then
-            depletedNodes = {}
-            depletedByPlayer[player] = depletedNodes
-        end
-
-        local function isSelected(id, node)
-            if not node or depletedNodes[id] == node then return false end
-            return (titanium and table.find(titaniumIds, id) ~= nil and node.Name:lower() == "titanium")
-                or (skyCrystal and table.find(skyCrystalIds, id) ~= nil and node:GetAttribute("Ore") == "ore_sky_crystal")
-        end
-
-        local marker
-        local targetId
-        local nearest = math.huge
-        for _, part in ipairs(CollectionService:GetTagged("MineRockSpawn")) do
-            if part:IsA("BasePart") and part.Anchored and part:IsDescendantOf(workspace) then
-                local id = part:GetAttribute("VeinId")
-                if type(id) == "number" and isSelected(id, nodes[id]) then
-                    if id == currentId then
-                        marker, targetId = part, id
-                        break
-                    end
-                    local distance = (part.Position - root.Position).Magnitude
-                    if distance < nearest then
-                        marker, targetId, nearest = part, id, distance
-                    end
-                end
-            end
-        end
-        if not marker then return false, "Waiting for marked veins" end
-
-        local node = nodes[targetId]
-        local miningDelay = table.find(skyCrystalIds, targetId) and 3.8 or 2.7
-        local displacement = marker.Position - root.Position
-        if targetId ~= currentId or displacement.Magnitude > 5 then
-            character:PivotTo(character:GetPivot() + displacement)
-            root.AssemblyLinearVelocity = Vector3.zero
-            root.AssemblyAngularVelocity = Vector3.zero
-            return targetId, "At vein " .. targetId, miningDelay
-        end
-
-        local depleted = mineVein(player, node)
-        if depleted == true or not node:IsDescendantOf(folder) then
-            depletedNodes[targetId] = node
-            return false, "Depleted vein " .. targetId
-        end
-        return targetId, "Mining vein " .. targetId, miningDelay
-    end
-
-    local remote = Instance.new("RemoteFunction")
-    remote.Name = "PibbleHubAutoMine"
-
-    remote.OnServerInvoke = function(player, titanium, skyCrystal, currentId)
-        if type(titanium) ~= "boolean" or type(skyCrystal) ~= "boolean" or not (titanium or skyCrystal)
-            or (currentId ~= nil and type(currentId) ~= "number") then
-            return nil, "Invalid ore selection"
-        end
-
-        local now = os.clock()
-        if inFlight[player] or now - (lastRequest[player] or -math.huge) < 0.8 then
-            return currentId or false, "Waiting for next mining action"
-        end
-
-        lastRequest[player] = now
-        inFlight[player] = true
-        local ok, nextId, message, miningDelay = pcall(miningStep, player, titanium, skyCrystal, currentId)
-        inFlight[player] = nil
-        if not ok then
-            warn("Auto Mine:", nextId)
-            return nil, "Mining handler error"
-        end
-        return nextId, message, miningDelay
-    end
-
-    remote.Parent = ReplicatedStorage
-    return
-end
-
 --[[
     PibbleHub
     =====================================================================
@@ -804,6 +671,8 @@ local function runHub()
     -- =====================================================================
     do
         label("Mine Rocks", 30, ORANGE)
+        local titaniumIds = {6, 83, 2, 68, 5, 73, 74, 3, 8, 54, 1, 45}
+        local skyCrystalIds = {4, 61, 56, 72, 85, 87, 86, 47, 42, 66, 44, 78, 48}
         local titanium = false
         local skyCrystal = false
         local running = false
@@ -837,38 +706,69 @@ local function runHub()
                 return
             end
 
-            local remote = game:GetService("ReplicatedStorage"):FindFirstChild("PibbleHubAutoMine")
-            if not remote or not remote:IsA("RemoteFunction") then
-                statusL.Text = "Auto Mine server unavailable"
-                return
-            end
-
             running, pending = true, true
             startBtn.Text = "Stop Auto Mine"
+
             local vein
+            local arrival
+            local waitForOre
+            local veinId
+
             while running and gui.Parent do
-                local waitSeconds = 1
                 if Raid.running or Boss.active or Tower.auto or Dungeon.active then
                     statusL.Text = "Auto Mine paused during battle"
+                    vein = nil
+                elseif vein and os.clock() - arrival < waitForOre then
+                    statusL.Text = "Mining vein " .. veinId
+                elseif vein and vein:IsDescendantOf(workspace) and vein:FindFirstChildWhichIsA("BasePart", true) then
+                    statusL.Text = "Waiting for vein " .. veinId .. " to clear"
                 else
-                    local ok, nextVein, message, miningDelay = pcall(function()
-                        return remote:InvokeServer(titanium, skyCrystal, vein)
-                    end)
-                    if not running then
-                        statusL.Text = "Auto Mine stopped"
-                        break
+                    vein = nil
+                    local maps = workspace:FindFirstChild("Maps")
+                    local cavern = maps and maps:FindFirstChild("CrystalCavern")
+                    local nodes = cavern and cavern:FindFirstChild("MiningNodes")
+                    local root = getHRP()
+                    local humanoid = root and root.Parent:FindFirstChildOfClass("Humanoid")
+                    if nodes and humanoid and humanoid.Health > 0 and not humanoid.SeatPart then
+                        local nearest = math.huge
+                        local landing
+                        for _, node in ipairs(nodes:GetChildren()) do
+                            local id = node:GetAttribute("VeinId")
+                            local ore = node:GetAttribute("Ore")
+                            local isSky = skyCrystal and table.find(skyCrystalIds, id) and ore == "ore_sky_crystal"
+                            local isTitanium = titanium and table.find(titaniumIds, id)
+                                and (node.Name:lower() == "titanium" or ore == "ore_titanium")
+                            if (isSky or isTitanium) and node:IsA("Model") and node:FindFirstChildWhichIsA("BasePart", true) then
+                                local cf, size = node:GetBoundingBox()
+                                local distance = (cf.Position - root.Position).Magnitude
+                                if distance < nearest then
+                                    nearest = distance
+                                    vein, veinId = node, id
+                                    waitForOre = isSky and 3.8 or 2.7
+                                    local top = (math.abs(cf.RightVector.Y) * size.X
+                                        + math.abs(cf.UpVector.Y) * size.Y
+                                        + math.abs(cf.LookVector.Y) * size.Z) / 2
+                                    local clearance = humanoid.HipHeight + root.Size.Y / 2 + 0.25
+                                    landing = cf.Position + Vector3.new(0, top + math.max(clearance, 3), 0)
+                                end
+                            end
+                        end
+                        if landing then
+                            root.CFrame = root.CFrame + (landing - root.Position)
+                            root.AssemblyLinearVelocity = Vector3.zero
+                            root.AssemblyAngularVelocity = Vector3.zero
+                            arrival = os.clock()
+                            statusL.Text = "At vein " .. veinId
+                        else
+                            statusL.Text = "Waiting for selected ore"
+                        end
+                    else
+                        statusL.Text = "Waiting for the cavern and character"
                     end
-                    if not ok then
-                        statusL.Text = "Auto Mine server error"
-                        break
-                    end
-                    statusL.Text = message
-                    if nextVein == nil then break end
-                    vein = nextVein or nil
-                    waitSeconds = miningDelay or waitSeconds
                 end
-                task.wait(waitSeconds)
+                task.wait(0.25)
             end
+
             if not running then statusL.Text = "Auto Mine stopped" end
             running, pending = false, false
             startBtn.Text = "Start Auto Mine"
