@@ -860,7 +860,19 @@ local function runHub()
             if not activated then return false, "Crystal Cavern prompt failed" end
 
             task.wait(1)
-            return shouldContinue()
+            deadline = os.clock() + 5
+            repeat
+                if not shouldContinue() then return false end
+                local playerGui = player:FindFirstChildOfClass("PlayerGui")
+                local miningGui = playerGui and playerGui:FindFirstChild("MiningGui", true)
+                local autoButton = miningGui and miningGui:FindFirstChild("MineAuto", true)
+                if autoButton and autoButton:IsA("GuiButton") and shown(autoButton) then
+                    if activateButton(autoButton) then return true end
+                    return false, "Could not click Mine Auto"
+                end
+                task.wait(0.2)
+            until os.clock() >= deadline
+            return false, "Mine Auto button not visible"
         end
 
 
