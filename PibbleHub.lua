@@ -136,6 +136,7 @@ local function runHub()
         {"Train to Kyoto", {"power", "denji", "boss_makima"}},
         {"Isekai", {"ise_tanya_npc", "ise_smith_npc", "boss_rimuru"}},
         {"Hellsing Mansion", {"hw_walter", "hw_seras_integra", "hw_alucard_anderson"}},
+        {"Clover Kingdom", {"bc_magna_npc", "bc_nacht_npc", "boss_yami"}},
     }
     -- Reward of the first clear (grows with the difficulty), shown next to each NPC
     local FIRST_CLEAR = {
@@ -342,7 +343,14 @@ local function runHub()
     end
 
     -- "boss_rimuru" -> "Rimuru", "hw_seras_integra" -> "Seras Integra"
+    local BOSS_DISPLAY_NAMES = {
+        bc_magna_npc = "Flaming Bat",
+        bc_nacht_npc = "Quad Devil User",
+        boss_yami = "Bull Captain",
+    }
+
     local function niceName(id)
+        if BOSS_DISPLAY_NAMES[id] then return BOSS_DISPLAY_NAMES[id] end
         local n = id:gsub("^boss_", ""):gsub("^hw_", ""):gsub("_npc$", ""):gsub("_", " ")
         return (n:gsub("(%a)([%w]*)", function(f, r) return f:upper() .. r end))
     end
