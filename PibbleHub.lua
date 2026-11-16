@@ -674,6 +674,95 @@ local function runHub()
         end
     end
 
+    do
+        local destinations = {"Abandoned Island", "Twin Beaches", "Windmill Isle", "Sky Quarry"}
+        local openBtn = button("Island Teleports", 10, 752, 230, 18, DARK)
+        local menu = Instance.new("Frame")
+        menu.Size = UDim2.fromOffset(230, 152)
+        menu.Position = UDim2.fromOffset(10, 596)
+        menu.BackgroundColor3 = DARK
+        menu.ZIndex = 20
+        menu.Visible = false
+        menu.Parent = win
+        Instance.new("UICorner", menu)
+
+        local status = label("", 126, nil, 13)
+        status.Parent = menu
+        status.ZIndex = 21
+
+        local function visibleButton(text)
+            local b = findButton(function(t) return t == text end)
+            return b and shown(b) and b or nil
+        end
+
+        local function islandButton(name)
+            local pg = player:FindFirstChild("PlayerGui")
+            if not pg then return nil end
+            for _, title in ipairs(pg:GetDescendants()) do
+                if (title:IsA("TextLabel") or title:IsA("TextButton"))
+                    and clean(title.Text) == name and shown(title) and not title:IsDescendantOf(gui) then
+                    local card = title.Parent
+                    while card and not card:IsA("LayerCollector") do
+                        local match
+                        for _, child in ipairs(card:GetDescendants()) do
+                            if child:IsA("TextLabel") or child:IsA("TextButton") then
+                                if btnText(child) == "teleport" then
+                                    local b = child:IsA("TextButton") and child
+                                        or child:FindFirstAncestorWhichIsA("GuiButton")
+                                    if b and b:IsDescendantOf(card) and shown(b) then
+                                        if match and match ~= b then return nil end
+                                        match = b
+                                    end
+                                end
+                            end
+                        end
+                        if match then return match end
+                        card = card.Parent
+                    end
+                end
+            end
+            return nil
+        end
+
+        local busy = false
+        openBtn.Activated:Connect(function() menu.Visible = not menu.Visible end)
+        for i, name in ipairs(destinations) do
+            local b = button(name, 8, 6 + (i - 1) * 30, 214, 26, BLUE, menu, 21)
+            b.Activated:Connect(function()
+                if busy then return end
+                busy = true
+                status.Text = ""
+                local target = islandButton(name)
+                if not target then
+                    local tab = visibleButton("islands")
+                    if not tab then
+                        local opener = findButton(function(t)
+                            return t == "worlds" or t == "world" or t == "teleport"
+                        end)
+                        if opener and shown(opener) and activateButton(opener) then
+                            task.wait(0.35)
+                            tab = visibleButton("islands")
+                        end
+                    end
+                    if tab and activateButton(tab) then
+                        for _ = 1, 10 do
+                            task.wait(0.15)
+                            target = islandButton(name)
+                            if target then break end
+                        end
+                    end
+                end
+                if target and activateButton(target) then
+                    menu.Visible = false
+                else
+                    status.Text = "Open the game's Islands tab"
+                end
+                busy = false
+            end)
+        end
+    end
+
+
     -- =====================================================================
     -- == 8. FEATURE: AUTO MINE
     -- =====================================================================
