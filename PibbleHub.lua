@@ -713,6 +713,7 @@ local function runHub()
             local arrival
             local waitForOre
             local veinId
+            local lastVeinId
 
             while running and gui.Parent do
                 if Raid.running or Boss.active or Tower.auto or Dungeon.active then
@@ -720,8 +721,6 @@ local function runHub()
                     vein = nil
                 elseif vein and os.clock() - arrival < waitForOre then
                     statusL.Text = "Mining vein " .. veinId
-                elseif vein and vein:IsDescendantOf(workspace) and vein:FindFirstChildWhichIsA("BasePart", true) then
-                    statusL.Text = "Waiting for vein " .. veinId .. " to clear"
                 else
                     vein = nil
                     local maps = workspace:FindFirstChild("Maps")
@@ -730,7 +729,7 @@ local function runHub()
                     local root = getHRP()
                     local humanoid = root and root.Parent:FindFirstChildOfClass("Humanoid")
                     if nodes and humanoid and humanoid.Health > 0 and not humanoid.SeatPart then
-                        local nearest = math.huge
+                        local bestRank = math.huge
                         local landing
                         for _, node in ipairs(nodes:GetChildren()) do
                             local id = node:GetAttribute("VeinId")
@@ -741,8 +740,10 @@ local function runHub()
                             if (isSky or isTitanium) and node:IsA("Model") and node:FindFirstChildWhichIsA("BasePart", true) then
                                 local cf, size = node:GetBoundingBox()
                                 local distance = (cf.Position - root.Position).Magnitude
-                                if distance < nearest then
-                                    nearest = distance
+                                -- After the first teleport, visit IDs in ascending order and wrap.
+                                local rank = lastVeinId and (id - lastVeinId - 1) % 100 or distance
+                                if rank < bestRank then
+                                    bestRank = rank
                                     vein, veinId = node, id
                                     waitForOre = isSky and 3.8 or 2.7
                                     local top = (math.abs(cf.RightVector.Y) * size.X
@@ -758,6 +759,7 @@ local function runHub()
                             root.AssemblyLinearVelocity = Vector3.zero
                             root.AssemblyAngularVelocity = Vector3.zero
                             arrival = os.clock()
+                            lastVeinId = veinId
                             statusL.Text = "At vein " .. veinId
                         else
                             statusL.Text = "Waiting for selected ore"
