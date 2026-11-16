@@ -752,7 +752,110 @@ local function runHub()
         end
 
 
+        menu.Size = UDim2.fromOffset(230, 414)
+        menu.Position = UDim2.fromOffset(10, 340)
+        status.Position = UDim2.fromOffset(10, 386)
         local busy = false
+
+        local function findPortalItem(itemName)
+            local pg = player:FindFirstChildOfClass("PlayerGui")
+            if not pg then return nil end
+            for _, item in ipairs(pg:GetDescendants()) do
+                if item.Name == itemName then
+                    local control = item:IsA("GuiButton") and item or item:FindFirstAncestorWhichIsA("GuiButton")
+                    if control and shown(control) then return control end
+                end
+            end
+        end
+
+        local function visibleButtonIn(root, name)
+            for _, item in ipairs(root:GetDescendants()) do
+                if (item:IsA("TextButton") or item:IsA("TextLabel")) and btnText(item) == name then
+                    local control = item:IsA("GuiButton") and item
+                        or item:FindFirstAncestorWhichIsA("GuiButton")
+                    if control and shown(control) then return control end
+                end
+            end
+        end
+
+        local function useWorldPortal(worldName, worldId)
+            if busy then return end
+            busy = true
+            status.Text = "Teleporting to " .. worldName .. "..."
+            local root = getHRP()
+            if not root then
+                status.Text = "Character unavailable"
+                busy = false
+                return
+            end
+            local origin = root.Position
+            if not Worlds.go(worldName) then
+                status.Text = "Could not teleport to " .. worldName
+                busy = false
+                return
+            end
+
+            local deadline = os.clock() + 15
+            repeat
+                task.wait(0.2)
+                root = getHRP()
+            until (root and (root.Position - origin).Magnitude >= 25) or os.clock() >= deadline
+            if not root or (root.Position - origin).Magnitude < 25 then
+                status.Text = worldName .. " arrival timed out"
+                busy = false
+                return
+            end
+
+            status.Text = "Finding " .. worldName .. " Portal..."
+            local pg = player:FindFirstChildOfClass("PlayerGui")
+            local item = findPortalItem("Item_portal_" .. worldId)
+            if not item or not activateButton(item) then
+                status.Text = worldName .. " portal item not visible in inventory"
+                busy = false
+                return
+            end
+
+            local useButton
+            deadline = os.clock() + 5
+            repeat
+                task.wait(0.2)
+                if pg then useButton = visibleButtonIn(pg, "use") end
+            until useButton or os.clock() >= deadline
+            if not useButton or not activateButton(useButton) then
+                status.Text = worldName .. " Portal Use button not found"
+                busy = false
+                return
+            end
+
+            status.Text = "Portal opened. Waiting to join..."
+            local joinButton
+            deadline = os.clock() + 8
+            repeat
+                task.wait(0.2)
+                if pg then
+                    joinButton = visibleButtonIn(pg, "join")
+                        or visibleButtonIn(pg, "start")
+                end
+            until joinButton or os.clock() >= deadline
+
+            if joinButton and activateButton(joinButton) then
+                status.Text = "Joined " .. worldName .. " portal"
+            else
+                status.Text = "Portal opened. Join or Start button not found"
+            end
+            busy = false
+        end
+
+        for index, world in ipairs(BOSS_WORLDS) do
+            local worldName = world[1]
+            local worldId = worldName:lower():gsub("[^%w]+", "_"):gsub("^_+", ""):gsub("_+$", "")
+            local portalButton = button("Use " .. worldName .. " Portal", 8, 126 + (index - 1) * 30,
+                214, 26, GREEN, menu, 21)
+            portalButton.Activated:Connect(function()
+                useWorldPortal(worldName, worldId)
+            end)
+        end
+
         openBtn.Activated:Connect(function() menu.Visible = not menu.Visible end)
         for i, name in ipairs(destinations) do
             local b = button(name, 8, 6 + (i - 1) * 30, 214, 26, BLUE, menu, 21)
