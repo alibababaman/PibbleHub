@@ -790,19 +790,25 @@ local function runHub()
             {label = "Train to Kyoto", item = "train_to_kyoto", world = "Train to Kyoto"},
             {label = "Hellsing Mansion", item = "hellsing_mansion", world = "Hellsing Mansion"},
         }
-        local selectedPortal
+        local selectedPortals = {}
 
-        local function findPortalItem(itemName)
+        local function getInventory()
             local pg = player:FindFirstChildOfClass("PlayerGui")
-            if not pg then return nil end
-            for _, item in ipairs(pg:GetDescendants()) do
-                if item.Name == itemName then
-                    local control = item:IsA("GuiButton") and item or item:FindFirstAncestorWhichIsA("GuiButton")
-                    if control and shown(control) then return control end
-                end
-            end
-            return nil
+            return pg and pg:FindFirstChild("ItemGui")
         end
+
+        local function findPortalItem(inventory, itemName)
+            local frame = inventory and inventory:FindFirstChild("ItemFrame")
+            local grid = frame and frame:FindFirstChild("ItemGrid")
+            local item = grid and grid:FindFirstChild(itemName)
+            if not item or not shown(item) then return nil end
+            if item:IsA("GuiButton") then return item end
+            local control = item:FindFirstChildWhichIsA("GuiButton", true)
+            if control and shown(control) then return control end
+            control = item:FindFirstAncestorWhichIsA("GuiButton")
+            return control and control:IsDescendantOf(grid) and shown(control) and control or nil
+        end
+
 
         local function visibleButtonIn(root, name)
             for _, item in ipairs(root:GetDescendants()) do
@@ -912,21 +918,19 @@ local function runHub()
         end
 
 
-        local function useSelectedPortal()
-            if busy or not selectedPortal then return end
-            busy = true
-            local choice = selectedPortal
+        local autoCreate = false
+        local function creatingPortal() return autoCreate and gui.Parent ~= nil end
+
+        local function createPortal(choice)
             status.Text = "Teleporting to " .. choice.label .. "..."
             local root = getHRP()
             if not root then
                 status.Text = "Character unavailable"
-                busy = false
                 return
             end
             local origin = root.Position
             if not Worlds.go(choice.world) then
                 status.Text = "Could not teleport to " .. choice.label
-                busy = false
                 return
             end
 
@@ -934,38 +938,37 @@ local function runHub()
             repeat
                 task.wait(0.2)
                 root = getHRP()
-            until (root and (root.Position - origin).Magnitude >= 25) or os.clock() >= deadline
+            until not creatingPortal() or (root and (root.Position - origin).Magnitude >= 25) or os.clock() >= deadline
+            if not creatingPortal() then return end
             if not root or (root.Position - origin).Magnitude < 25 then
                 status.Text = choice.label .. " arrival timed out"
-                busy = false
                 return
             end
 
             local gateSnapshot = portalGateSnapshot()
-            local item = findPortalItem("Item_portal_" .. choice.item)
+            local inventory = getInventory()
+            local item = findPortalItem(inventory, "Item_portal_" .. choice.item)
             if not item or not activateButton(item) then
                 status.Text = choice.label .. " portal is not visible in inventory"
-                busy = false
                 return
             end
 
-            local pg = player:FindFirstChildOfClass("PlayerGui")
             local useButton
             deadline = os.clock() + 5
             repeat
                 task.wait(0.2)
-                if pg then useButton = visibleButtonIn(pg, "use") end
-            until useButton or os.clock() >= deadline
+                inventory = getInventory()
+                if inventory then useButton = visibleButtonIn(inventory, "use") end
+            until not creatingPortal() or useButton or os.clock() >= deadline
+            if not creatingPortal() then return end
             if not useButton or not activateButton(useButton) then
                 status.Text = choice.label .. " portal Use button not found"
-                busy = false
                 return
             end
 
             status.Text = "Waiting for " .. choice.label .. " portal..."
             task.wait(2)
-            if not gui.Parent then
-                busy = false
+            if not creatingPortal() then
                 return
             end
             local gate
@@ -973,17 +976,19 @@ local function runHub()
             repeat
                 task.wait(0.2)
                 gate = findNewPortal(gateSnapshot)
-            until gate or os.clock() >= deadline
+            until not creatingPortal() or gate or os.clock() >= deadline
+            if not creatingPortal() then return end
             if not gate then
                 status.Text = "Portal spawned, but its gate was not found"
-                busy = false
-                return
+                return false
             end
 
-            joinPortal(gate, nil, 2)
-            busy = false
+            joinPortal(gate, creatingPortal, 2)
+            local _, _, inPortal = portalAutoFight()
+            return inPortal == true
         end
 
+        local choices = {}
         local choiceButtons = {}
         for index, world in ipairs(portalChoices) do
             local y = 126 + (index - 1) * 27
@@ -1001,20 +1006,64 @@ local function runHub()
                 local portalButton = button("☐ " .. difficulty, 92 + (column - 1) * 65,
                     y, 64, 26, DARK, menu, 21)
                 portalButton.TextSize = 11
-                choiceButtons[portalButton] = difficulty
+                choices[#choices + 1] = choice
+                choiceButtons[choice] = portalButton
+                choice.difficulty = difficulty
                 portalButton.Activated:Connect(function()
                     if busy then return end
-                    selectedPortal = choice
-                    for control, name in pairs(choiceButtons) do
-                        control.Text = (control == portalButton and "☑ " or "☐ ") .. name
-                    end
-                    status.Text = "Selected " .. choice.label
+                    selectedPortals[choice] = not selectedPortals[choice] or nil
+                    portalButton.Text = (selectedPortals[choice] and "☑ " or "☐ ") .. difficulty
                 end)
             end
         end
 
-        local useSelectedBtn = button("Auto Create Portal", 8, 376, 214, 28, GREEN, menu, 21)
-        useSelectedBtn.Activated:Connect(useSelectedPortal)
+        local useSelectedBtn = button("Auto Create: OFF", 8, 376, 137, 28, GREEN, menu, 21)
+        local selectAllBtn = button("Toggle All", 150, 376, 72, 28, DARK, menu, 21)
+        selectAllBtn.Activated:Connect(function()
+            if busy then return end
+            local allSelected = true
+            for _, choice in ipairs(choices) do
+                if not selectedPortals[choice] then
+                    allSelected = false
+                    break
+                end
+            end
+            for _, choice in ipairs(choices) do
+                selectedPortals[choice] = not allSelected or nil
+                choiceButtons[choice].Text = (allSelected and "☐ " or "☑ ") .. choice.difficulty
+            end
+        end)
+
+        useSelectedBtn.Activated:Connect(function()
+            if autoCreate then
+                autoCreate = false
+                useSelectedBtn.Text = "Auto Create: OFF"
+                status.Text = "Auto Create stopped"
+                return
+            end
+            if busy then return end
+            if not next(selectedPortals) then
+                status.Text = "Check a portal first"
+                return
+            end
+            busy = true
+            autoCreate = true
+            useSelectedBtn.Text = "Auto Create: ON"
+            for _, choice in ipairs(choices) do
+                if not creatingPortal() then break end
+                if selectedPortals[choice] then
+                    local _, _, inPortal = portalAutoFight()
+                    while creatingPortal() and inPortal do
+                        task.wait(1)
+                        _, _, inPortal = portalAutoFight()
+                    end
+                    if not creatingPortal() or createPortal(choice) == false then break end
+                end
+            end
+            autoCreate = false
+            useSelectedBtn.Text = "Auto Create: OFF"
+            busy = false
+        end)
 
         local autoJoin = false
         local attempted = setmetatable({}, {__mode = "k"})
