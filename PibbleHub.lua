@@ -826,34 +826,28 @@ local function runHub()
             return frame and shown(frame)
         end
 
-        local function inventoryControl(scope, names, caption)
-            for _, control in ipairs(scope:GetDescendants()) do
-                if control:IsA("GuiButton") and shown(control) and not control:IsDescendantOf(gui) then
-                    local name = control.Name:lower():gsub("[^%w]", "")
-                    if names[name] then return control end
-                end
-            end
-            return visibleButtonIn(scope, caption)
-        end
-
+        local openedItemGui
         local function openInventory()
-            if inventoryIsOpen(getInventory()) then return end
-            local playerGui = player:FindFirstChildOfClass("PlayerGui")
-            if not playerGui then return end
-            local opener = inventoryControl(playerGui, {
-                inventory = true, inventorybutton = true, inventorybtn = true,
-                itembutton = true, itembtn = true, openinventory = true,
-            }, "inventory")
-            if opener then activateButton(opener) end
+            local inventory = getInventory()
+            local frame = inventory and inventory:FindFirstChild("ItemFrame")
+            if not frame or not frame:IsA("GuiObject") then return end
+            if inventory:IsA("ScreenGui") and not inventory.Enabled then
+                inventory.Enabled = true
+                openedItemGui = inventory
+            end
+            frame.Visible = true
         end
 
         local function closeInventory()
             local inventory = getInventory()
-            if not inventoryIsOpen(inventory) then return end
-            local closer = inventoryControl(inventory, {
-                close = true, closebutton = true, closebtn = true, closeinventory = true,
-            }, "x") or visibleButtonIn(inventory, "close")
-            if closer then activateButton(closer) end
+            local frame = inventory and inventory:FindFirstChild("ItemFrame")
+            if frame and frame:IsA("GuiObject") then
+                frame.Visible = false
+            end
+            if openedItemGui then
+                openedItemGui.Enabled = false
+                openedItemGui = nil
+            end
         end
 
 
@@ -998,10 +992,11 @@ local function runHub()
 
 
         local function createPortal(choice)
+            if not enterPortalWorld("Lobby", creatingPortal) then return end
             if not enterPortalWorld(choice.world, creatingPortal) then return end
             local deadline
             local gateSnapshot = portalGateSnapshot()
-            status.Text = "Loading inventory..."
+            status.Text = "Loading items..."
             openInventory()
             local inventory, item
             deadline = os.clock() + 6
@@ -1018,7 +1013,7 @@ local function runHub()
             end
             if not item or not activateButton(item) then
                 closeInventory()
-                status.Text = choice.label .. " portal is not visible in inventory"
+                status.Text = choice.label .. " portal was not found in ItemGrid"
                 return
             end
 
