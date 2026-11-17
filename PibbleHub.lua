@@ -905,7 +905,39 @@ local function runHub()
         end
 
 
-        local function joinPortal(gate, shouldContinue, walkSeconds)
+        local function portalWaitingRoom()
+            local pg = player:FindFirstChildOfClass("PlayerGui")
+            if not pg then return nil end
+            for _, title in ipairs(pg:GetDescendants()) do
+                if btnText(title) == "waiting room" and shown(title) then
+                    local panel = title.Parent
+                    while panel and not panel:IsA("LayerCollector") do
+                        local start = visibleButtonIn(panel, "start")
+                        if start and visibleButtonIn(panel, "abandon") then return start, true end
+                        panel = panel.Parent
+                    end
+                    return nil, true
+                end
+            end
+            return nil
+        end
+
+        local function clickPortalControl(control)
+            if typeof(getconnections) == "function" then
+                for _, signal in ipairs({control.Activated, control.MouseButton1Click}) do
+                    local ok, fired = pcall(function()
+                        local connections = getconnections(signal)
+                        for _, connection in ipairs(connections) do connection:Fire() end
+                        return #connections > 0
+                    end)
+                    if ok and fired then return true end
+                end
+            end
+            return activateButton(control)
+        end
+
+
+        local function joinPortal(gate, shouldContinue, walkSeconds, startRun)
             local humanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
             if not humanoid then
                 status.Text = "Character unavailable"
@@ -925,6 +957,7 @@ local function runHub()
             local deadline = os.clock() + 20
             local stopWalkingAt = walkSeconds and os.clock() + walkSeconds
             local requested = false
+            local startRequested = false
             repeat
                 if stopWalkingAt and os.clock() >= stopWalkingAt then
                     local root = getHRP()
@@ -936,15 +969,35 @@ local function runHub()
                     if root then humanoid:MoveTo(root.Position) end
                     return
                 end
+                local startButton, waitingRoom
+                if startRun then
+                    startButton, waitingRoom = portalWaitingRoom()
+                    if startRequested and not waitingRoom then
+                        status.Text = "Waiting Room closed after Start"
+                        return
+                    end
+                end
                 local enabled, toggle = portalAutoFight()
                 if enabled then
-                    status.Text = "Portal Auto Fight is on"
-                    return
+                    if not startRun then
+                        status.Text = "Portal Auto Fight is on"
+                        return
+                    end
+                    if startButton and not startRequested then
+                        startRequested = clickPortalControl(startButton)
+                        if startRequested then status.Text = "Starting portal run..." end
+                    end
+                elseif toggle and not requested then
+                    requested = clickPortalControl(toggle)
                 end
-                if toggle and not requested then requested = activateButton(toggle) end
                 task.wait(0.25)
             until not gui.Parent or os.clock() >= deadline
-            status.Text = requested and "Auto Fight did not show ON" or "Portal entry not confirmed"
+            if startRun and portalAutoFight() then
+                status.Text = startRequested and "Start was clicked but waiting room is still open"
+                    or "Waiting Room Start button not found"
+            else
+                status.Text = requested and "Auto Fight did not show ON" or "Portal entry not confirmed"
+            end
         end
 
 
@@ -1049,7 +1102,7 @@ local function runHub()
                 return false
             end
 
-            joinPortal(gate, creatingPortal, 2)
+            joinPortal(gate, creatingPortal, 2, true)
             local _, _, inPortal = portalAutoFight()
             return inPortal == true
         end
