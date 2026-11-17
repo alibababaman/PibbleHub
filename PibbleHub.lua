@@ -12,7 +12,6 @@
       7b. Anti-AFK
       7c. World teleport (Auto Boss: each boss NPC lives in its own world)
        8. Feature: Auto Mine
-       9. Feature: Halloween Tower
       10. Feature: Auto Boss
       11. Feature: Infinite Tower (auto give up when a weather appears)
      11b. Feature: Auto Raid (4 fights at xx:00 and xx:30, 15 min window)
@@ -22,7 +21,7 @@
 
     Every feature lives in its own do ... end block: its UI, its logic and its
     event wiring are all in one place. Features talk to each other only through
-    the state tables from section 3 (Tower, Boss, Infinite, Raid, Dungeon).
+    the state tables from section 3 (Boss, Infinite, Raid, Dungeon).
 ]]
 
 local ICON_B64 -- base64 JPEG of the toggle-button icon (empty: the button shows a "P")
@@ -36,9 +35,7 @@ local function runHub()
     local R = game:GetService("ReplicatedStorage"):WaitForChild("Remotes")
 
     local Remotes = {
-        StartBattle = R:WaitForChild("StartBattle"),
         BattleEnd = R:WaitForChild("BattleEnd"),
-        OpenTower = R:WaitForChild("OpenHalloweenTower"),
         EndTower = R:WaitForChild("EndTowerRemote", 5),     -- "Give up"
         Teleport = R:WaitForChild("TeleportToWorld", 5),    -- :FireServer("lobby")
         SetNPCDiff = R:WaitForChild("SetNPCDifficulty", 5), -- :FireServer("hw_alucard_anderson", "impossible")
@@ -52,8 +49,6 @@ local function runHub()
     -- == 2. CONFIG & STATIC DATA
     -- =====================================================================
     local CFG = {
-        MAX_FLOOR = 500,
-        MAX_STAGE = 100,     -- 100 groups of 5 floors
         AUTO_DELAY = 3,      -- seconds between two milestones / retries
         END_ARG = 1,         -- argument sent to EndTowerRemote (as logged when clicking Give up)
         BOSS_TIMEOUT = 300,  -- seconds: if no BattleEnd arrives, the fight is considered over
@@ -153,13 +148,6 @@ local function runHub()
     -- =====================================================================
     -- == 3. SHARED STATE
     -- =====================================================================
-    local Tower = {
-        slot = 2,          -- updated automatically when the tower UI opens
-        stage = 1,         -- group of 5 floors (stage 1 = floors 1-5)
-        auto = false,
-        startAuto = nil,   -- set by the Tower feature (used to restore the saved switch)
-        resume = nil,      -- set by the Tower feature (relaunches the stage after a raid)
-    }
     local Boss = {
         auto = false,
         active = false,    -- a fight started by this script is running
@@ -202,7 +190,7 @@ local function runHub()
     }
     local Dungeon = {
         auto = false,
-        active = false,    -- a dungeon is starting / running: Tower and Boss leave the player alone
+        active = false,    -- a dungeon is starting / running: Boss leave the player alone
         startedAt = 0,
         lastEnd = -1e9,    -- os.clock() of the last end (the next dungeon waits DUNGEON_COOLDOWN)
         setAuto = nil,     -- set by the Dungeon feature (used to restore the saved switch)
@@ -279,9 +267,7 @@ local function runHub()
                     bosses = keysOf(Boss.selected),
                     diffs = keysOf(Boss.diffs),
                     weathers = keysOf(Infinite.weathers),
-                    stage = Tower.stage,
                     minFloor = Infinite.minFloor,
-                    autoTower = Tower.auto,
                     autoBoss = Boss.auto,
                     autoRaid = Raid.auto,
                     autoDungeon = Dungeon.auto,
@@ -306,9 +292,6 @@ local function runHub()
         Boss.selected = toSet(d.bosses, validBosses) or Boss.selected
         Boss.diffs = toSet(d.diffs, validDiffs) or Boss.diffs
         Infinite.weathers = toSet(d.weathers, validWeathers) or Infinite.weathers
-        if tonumber(d.stage) then
-            Tower.stage = math.clamp(math.floor(tonumber(d.stage)), 1, CFG.MAX_STAGE)
-        end
         if tonumber(d.minFloor) then
             Infinite.minFloor = math.max(1, math.floor(tonumber(d.minFloor)))
         end
@@ -402,8 +385,9 @@ local function runHub()
     gui.Parent = guiParent
 
     local win = Instance.new("Frame")
-    win.Size = UDim2.fromOffset(250, 770)
-    win.Position = UDim2.new(0, 30, 0.3, 0)
+    win.Size = UDim2.fromOffset(440, 568)
+    win.AnchorPoint = Vector2.new(0.5, 0.5)
+    win.Position = UDim2.fromScale(0.5, 0.5)
     win.BackgroundColor3 = Color3.fromRGB(26, 14, 38)
     win.BorderSizePixel = 0
     win.Active = true
@@ -412,10 +396,13 @@ local function runHub()
     win.Parent = gui
     Instance.new("UICorner", win)
 
+    local featurePage = win
+    local featureOffset = 0
+
     local function label(text, y, color, size)
         local l = Instance.new("TextLabel")
         l.Size = UDim2.new(1, -20, 0, 20)
-        l.Position = UDim2.fromOffset(10, y)
+        l.Position = UDim2.fromOffset(10, y - featureOffset)
         l.BackgroundTransparency = 1
         l.Font = FONT
         l.TextSize = size or 16
@@ -423,14 +410,14 @@ local function runHub()
         l.TextXAlignment = Enum.TextXAlignment.Left
         l.Text = text
         l.ZIndex = 5
-        l.Parent = win
+        l.Parent = featurePage
         return l
     end
 
     local function button(text, x, y, w, h, color, parentFrame, z)
         local b = Instance.new("TextButton")
         b.Size = UDim2.fromOffset(w, h)
-        b.Position = UDim2.fromOffset(x, y)
+        b.Position = UDim2.fromOffset(x, parentFrame and y or y - featureOffset)
         b.BackgroundColor3 = color
         b.BorderSizePixel = 0
         b.Font = FONT
@@ -438,7 +425,7 @@ local function runHub()
         b.TextColor3 = Color3.new(1, 1, 1)
         b.Text = text
         b.ZIndex = z or 5
-        b.Parent = parentFrame or win
+        b.Parent = parentFrame or featurePage
         Instance.new("UICorner", b)
         return b
     end
@@ -446,7 +433,7 @@ local function runHub()
     local function textbox(placeholder, x, y, w, h, text, size)
         local t = Instance.new("TextBox")
         t.Size = UDim2.fromOffset(w, h)
-        t.Position = UDim2.fromOffset(x, y)
+        t.Position = UDim2.fromOffset(x, y - featureOffset)
         t.BackgroundColor3 = Color3.fromRGB(45, 30, 65)
         t.BorderSizePixel = 0
         t.Font = FONT
@@ -457,26 +444,60 @@ local function runHub()
         t.ClearTextOnFocus = true
         t.Text = text or ""
         t.ZIndex = 5
-        t.Parent = win
+        t.Parent = featurePage
         Instance.new("UICorner", t)
         return t
     end
 
-    -- Dropdown panel that opens to the right of the window
-    local function sidePanel(className, w, h, y)
+    -- Picker panel beneath the feature controls
+    local function sidePanel(className, w, h)
         local f = Instance.new(className)
         f.Size = UDim2.fromOffset(w, h)
-        f.Position = UDim2.fromOffset(258, y)
+        f.Position = UDim2.fromOffset(10, 162)
         f.BackgroundColor3 = Color3.fromRGB(36, 22, 52)
         f.BorderSizePixel = 0
         f.Visible = false
         f.ZIndex = 20
-        f.Parent = win
+        f.Parent = featurePage
         Instance.new("UICorner", f)
         return f
     end
 
-    label("PibbleHub", 5, ORANGE, 20)
+    local nav = Instance.new("Frame")
+    nav.Size = UDim2.new(0, 138, 1, 0)
+    nav.BackgroundColor3 = Color3.fromRGB(36, 22, 52)
+    nav.BorderSizePixel = 0
+    nav.Parent = win
+    Instance.new("UICorner", nav)
+
+    local title = label("PibbleHub", 12, ORANGE, 20)
+    title.Parent = nav
+
+    local tabs = {}
+    local function featureTab(name, originalTop)
+        local page = Instance.new("Frame")
+        page.Name = name
+        page.Size = UDim2.new(1, -154, 1, -16)
+        page.Position = UDim2.fromOffset(146, 8)
+        page.BackgroundTransparency = 1
+        page.Visible = #tabs == 0
+        page.Parent = win
+
+        local tab = button(name, 8, 47 + #tabs * 38, 122, 32,
+            page.Visible and BLUE or DARK, nav)
+        tab.TextSize = 14
+        tabs[#tabs + 1] = {page = page, button = tab}
+        tab.Activated:Connect(function()
+            for _, entry in ipairs(tabs) do
+                entry.page.Visible = entry.page == page
+                entry.button.BackgroundColor3 = entry.page.Visible and BLUE or DARK
+            end
+        end)
+        featurePage = page
+        featureOffset = originalTop - 10
+    end
+
+
 
     -- Open / collapse button (square, rounded corners): the embedded icon if any, or a "P"
     do
@@ -676,15 +697,16 @@ local function runHub()
 
     local teleportToIsland
     do
+        featureTab("Portals & Islands", 10)
         local destinations = {"Abandoned Island", "Twin Beaches", "Windmill Isle", "Sky Quarry"}
-        local openBtn = button("Island Teleports", 10, 752, 230, 18, DARK)
+        local openBtn = button("Island Teleports & Portals", 10, 10, 270, 28, DARK)
         local menu = Instance.new("Frame")
         menu.Size = UDim2.fromOffset(230, 152)
         menu.Position = UDim2.fromOffset(10, 596)
         menu.BackgroundColor3 = DARK
         menu.ZIndex = 20
         menu.Visible = false
-        menu.Parent = win
+        menu.Parent = featurePage
         Instance.new("UICorner", menu)
 
         local status = label("", 126, nil, 13)
@@ -753,7 +775,7 @@ local function runHub()
 
 
         menu.Size = UDim2.fromOffset(230, 472)
-        menu.Position = UDim2.fromOffset(10, 280)
+        menu.Position = UDim2.fromOffset(10, 44)
         status.Position = UDim2.fromOffset(10, 440)
         local busy = false
 
@@ -1006,7 +1028,7 @@ local function runHub()
         task.spawn(function()
             while gui.Parent do
                 if autoJoin and not busy and not Raid.running and not Boss.active
-                    and not Tower.auto and not Dungeon.active then
+                    and not Dungeon.active then
                     local _, _, inPortal = portalAutoFight()
                     local gates = workspace:FindFirstChild("PortalModeGates")
                     local root = getHRP()
@@ -1062,6 +1084,7 @@ local function runHub()
     -- == 8. FEATURE: AUTO MINE
     -- =====================================================================
     do
+        featureTab("Auto Mine", 30)
         label("Mine Rocks", 30, ORANGE)
         local titaniumIds = {6, 83, 2, 68, 5, 73, 74, 3, 8, 54, 1, 45}
         local skyCrystalIds = {4, 61, 56, 72, 85, 87, 86, 47, 42, 66, 44, 78, 48}
@@ -1195,7 +1218,7 @@ local function runHub()
             local wasPaused = false
 
             while running and gui.Parent do
-                if Raid.running or Boss.active or Tower.auto or Dungeon.active then
+                if Raid.running or Boss.active or Dungeon.active then
                     statusL.Text = "Auto Mine paused during battle"
                     vein = nil
                     wasPaused = true
@@ -1269,202 +1292,10 @@ local function runHub()
 
 
     -- =====================================================================
-    -- == 9. FEATURE: HALLOWEEN TOWER
-    -- =====================================================================
-    do
-        label("Halloween Tower", 152, ORANGE)
-        local floorLbl = label("Floors 1-5", 172)
-        local statusL = label("Tower: idle", 192)
-        local minusBtn = button("-", 10, 218, 36, 28, DARK)
-        local floorBox = textbox("Floor (1-500)", 52, 218, 122, 28, "1", 16)
-        local plusBtn = button("+", 180, 218, 36, 28, DARK)
-        local startBtn = button("Start", 10, 258, 105, 28, BLUE)
-        local autoBtn = button("Auto: OFF", 125, 258, 115, 28, RED)
-
-        local hiddenObjs = {}
-        local panel, lastScan = nil, 0
-
-        -- ---- floor selection ----
-        local function firstFloor(s) return (s - 1) * 5 + 1 end
-
-        local function setStage(s)
-            Tower.stage = math.clamp(math.floor(s), 1, CFG.MAX_STAGE)
-            local a = firstFloor(Tower.stage)
-            floorBox.Text = tostring(a)
-            floorLbl.Text = ("Floors %d-%d"):format(a, a + 4)
-            Settings.save()
-        end
-
-        local function readBox()
-            local n = tonumber(floorBox.Text)
-            if n then setStage(math.ceil(math.clamp(math.floor(n), 1, CFG.MAX_FLOOR) / 5)) end
-        end
-
-        -- ---- start a group of 5 floors ----
-        local function fireBind(name, ...)
-            local pg = player:FindFirstChild("PlayerGui")
-            local b = pg and pg:FindFirstChild(name)
-            if b and b:IsA("BindableEvent") then b:Fire(...) end
-        end
-
-        local function enterStage(s, isAuto)
-            local m = firstFloor(s)
-            local suffix = Tower.slot == 2 and "2" or ""
-            -- same calls the game's own Enter button makes
-            fireBind("ResetBattleFloor" .. suffix, m, "infinite_room")
-            fireBind("StartInfiniteRoomBattle" .. suffix, m, "halloween", isAuto or nil)
-            Remotes.StartBattle:FireServer("infinite_room", {
-                tower = "halloween",
-                milestone = m,
-                slot = Tower.slot,
-            })
-            statusL.Text = ("Tower: started %d-%d"):format(m, m + 4)
-        end
-
-        local function relaunch()
-            task.delay(CFG.AUTO_DELAY, function()
-                -- during a raid / dungeon the tower is paused: Raid / Dungeon call Tower.resume when it is over
-                if Tower.auto and gui.Parent and not Raid.running and not Dungeon.active then enterStage(Tower.stage, true) end
-            end)
-        end
-
-        -- ---- hide the game's tower UI while auto runs, so it doesn't pop up again ----
-        local function hideObj(o)
-            if o:IsA("ScreenGui") then
-                if o.Enabled then o.Enabled = false; hiddenObjs[o] = true end
-            elseif o:IsA("GuiObject") then
-                if o.Visible then o.Visible = false; hiddenObjs[o] = true end
-            end
-        end
-
-        -- Finds the tower window only: the smallest frame that contains BOTH the
-        -- "Enter Tower" button and the "Floors x-y" list. Other UIs are never matched.
-        local function findTowerPanel(pg)
-            for _, d in ipairs(pg:GetDescendants()) do
-                if (d:IsA("TextButton") or d:IsA("TextLabel"))
-                    and tostring(d.Text):lower():find("enter tower", 1, true) then
-                    local a = d.Parent
-                    while a and not a:IsA("ScreenGui") do
-                        if a:IsA("GuiObject") then
-                            for _, x in ipairs(a:GetDescendants()) do
-                                if (x:IsA("TextLabel") or x:IsA("TextButton"))
-                                    and tostring(x.Text):find("^%s*[Ff]loors?%s+%d") then
-                                    return a
-                                end
-                            end
-                        end
-                        a = a.Parent
-                    end
-                end
-            end
-        end
-
-        local function hideTowerGui()
-            pcall(function()
-                local pg = player:FindFirstChild("PlayerGui")
-                if not pg then return end
-                -- the tower's own gui, if it exists under this name
-                local g = pg:FindFirstChild("HalloweenTowerGui")
-                if g then hideObj(g) end
-                -- the tower window found by content (cached, rescanned at most once per second)
-                if not (panel and panel.Parent) and os.clock() - lastScan > 1 then
-                    lastScan = os.clock()
-                    panel = findTowerPanel(pg)
-                end
-                if panel and panel.Parent then hideObj(panel) end
-            end)
-        end
-
-        local function restoreTowerGui()
-            for o in pairs(hiddenObjs) do
-                if o.Parent then
-                    pcall(function()
-                        if o:IsA("ScreenGui") then o.Enabled = true else o.Visible = true end
-                    end)
-                end
-                hiddenObjs[o] = nil
-            end
-        end
-
-        local function stopAuto(msg)
-            Tower.auto = false
-            restoreTowerGui()
-            autoBtn.Text = "Auto: OFF"
-            autoBtn.BackgroundColor3 = RED
-            if msg then statusL.Text = msg end
-            Settings.save()
-        end
-
-        local function startAuto()
-            readBox()
-            Tower.auto = true
-            autoBtn.Text = "Auto: ON"
-            autoBtn.BackgroundColor3 = GREEN
-            enterStage(Tower.stage, true)
-            Settings.save()
-            -- keep the tower UI hidden while auto runs
-            task.spawn(function()
-                while Tower.auto and gui.Parent do
-                    hideTowerGui()
-                    task.wait(0.25)
-                end
-            end)
-        end
-        Tower.startAuto = startAuto
-
-        -- called by Auto Raid once the raid is over: relaunches the current stage
-        Tower.resume = function()
-            if Tower.auto and gui.Parent then enterStage(Tower.stage, true) end
-        end
-
-        -- ---- wiring ----
-        minusBtn.MouseButton1Click:Connect(function() setStage(Tower.stage - 1) end)
-        plusBtn.MouseButton1Click:Connect(function() setStage(Tower.stage + 1) end)
-        floorBox.FocusLost:Connect(function()
-            local n = tonumber(floorBox.Text)
-            if n then readBox() else setStage(Tower.stage) end
-        end)
-
-        startBtn.MouseButton1Click:Connect(function()
-            readBox()
-            enterStage(Tower.stage, false)
-        end)
-
-        autoBtn.MouseButton1Click:Connect(function()
-            if Tower.auto then
-                stopAuto("Tower: auto stopped")
-            else
-                startAuto()
-            end
-        end)
-
-        -- The server answers OpenHalloweenTower with (clearedFloor, slot, pausedRun):
-        -- keeps Tower.slot up to date when the game opens the tower UI
-        Remotes.OpenTower.OnClientEvent:Connect(function(cleared, slot)
-            Tower.slot = (slot == 2) and 2 or 1
-            statusL.Text = ("Tower: UI open (cleared %s, slot %d)"):format(tostring(cleared or 0), Tower.slot)
-            if Tower.auto then task.defer(hideTowerGui) end
-        end)
-
-        -- called by the BattleEnd router for Halloween Tower results
-        Tower.onBattleEnd = function(data)
-            statusL.Text = ("Tower: floor %s %s"):format(tostring(data.floor), tostring(data.result))
-            if not Tower.auto then return end
-            task.defer(hideTowerGui)
-            -- loss: relaunch the same stage. milestone_complete: win, relaunch the same stage.
-            -- (any other result = a single floor won, the group continues)
-            if LOSS[tostring(data.result):lower()] or data.result == "milestone_complete" then
-                relaunch()
-            end
-        end
-
-        setStage(Tower.stage)
-    end
-
-    -- =====================================================================
     -- == 10. FEATURE: AUTO BOSS
     -- =====================================================================
     do
+        featureTab("Auto Boss", 298)
         label("Auto Boss", 298, ORANGE)
         local statusL = label("Boss: idle", 318)
         local pickBtn = button("Boss: -", 10, 342, 230, 28, DARK)
@@ -1473,7 +1304,7 @@ local function runHub()
         local autoBtn = button("Auto: OFF", 125, 410, 115, 28, RED)
 
         -- ---- boss menu (multi-select, stays open) ----
-        local bossMenu = sidePanel("ScrollingFrame", 270, 380, 298)
+        local bossMenu = sidePanel("ScrollingFrame", 270, 380)
         bossMenu.ScrollBarThickness = 6
 
         local bossBtns, bossLabels, y = {}, {}, 6
@@ -1528,7 +1359,7 @@ local function runHub()
         refreshBossPick()
 
         -- ---- difficulty menu (multi-select) ----
-        local diffMenu = sidePanel("Frame", 190, (#DIFFS + 1) * 32 + 4, 330)
+        local diffMenu = sidePanel("Frame", 190, (#DIFFS + 1) * 32 + 4)
         local diffAllBtn = button("All difficulties", 8, 4, 174, 28, DARK, diffMenu, 21)
         local diffBtns = {}
         for i, d in ipairs(DIFFS) do
@@ -2177,7 +2008,7 @@ local function runHub()
                     if not s or s <= 0 then break end
                     s = math.ceil(s)
                     statusL.Text = ("Boss: all on timer, %d:%02d"):format(s // 60, s % 60)
-                    if not wentLobby and not Raid.running and not Tower.auto and not Dungeon.active then
+                    if not wentLobby and not Raid.running and not Dungeon.active then
                         wentLobby = Worlds.go("Lobby") ~= nil
                     end
                     task.wait(1)
@@ -2387,6 +2218,7 @@ local function runHub()
     -- == 11. FEATURE: INFINITE TOWER (auto give up when a weather appears)
     -- =====================================================================
     do
+        featureTab("Infinite Tower", 450)
         label("Infinite Tower", 450, ORANGE)
         local statusL = label("Auto give up: idle", 470)
         local weatherBtn = button("Weather: Any", 10, 494, 230, 28, DARK)
@@ -2395,7 +2227,7 @@ local function runHub()
 
         -- ---- weather menu (multi-select) ----
         local ITEM_H, ITEM_GAP = 28, 4
-        local weatherMenu = sidePanel("Frame", 190, (#WEATHERS + 1) * (ITEM_H + ITEM_GAP) + ITEM_GAP, 456)
+        local weatherMenu = sidePanel("Frame", 190, (#WEATHERS + 1) * (ITEM_H + ITEM_GAP) + ITEM_GAP)
         local anyBtn = button("Any weather", 8, ITEM_GAP, 174, ITEM_H, DARK, weatherMenu, 21)
         local weatherBtns = {}
         for i, w in ipairs(WEATHERS) do
@@ -2546,8 +2378,9 @@ local function runHub()
     -- Only the FIRST fight can mean "raid refused / on cooldown". Fights 2-4 are retried (a refusal text or a
     -- silence right after a fight is just the previous fight closing). The slot is marked as done only after the
     -- 4th fight; an interrupted raid is retried by Auto and continues from the next fight.
-    -- While a raid runs, Tower / Boss / Pop are paused, and resumed right after.
+    -- While a raid runs, Boss / Pop are paused, and resumed right after.
     do
+        featureTab("Auto Raid", 570)
         label("Auto Raid", 570, ORANGE)
         local statusL = label("Raid: idle", 590)
         local timerL = label("Next raid: -", 610)
@@ -3009,10 +2842,9 @@ local function runHub()
             -- otherwise (no auto mode is active) go back to the lobby
             task.spawn(function()
                 task.wait(1)
-                if Tower.auto and Tower.resume then Tower.resume() end
                 if Boss.auto and Boss.resume then
                     Boss.resume()
-                elseif not Tower.auto and not Dungeon.auto then
+                elseif not Dungeon.auto then
                     Worlds.go("Lobby")
                 end
                 -- the dungeon starts again right after the raid
@@ -3083,12 +2915,13 @@ local function runHub()
     -- =====================================================================
     -- Enters the dungeon by talking to Workspace.NPCs.DungeonNPC ("Marine Dungeon") and pressing "CONTINUE LAST RUN"
     -- (a remote named *dungeon* + start/enter/join is tried first if one exists). It is left with Exit -> SAVE & LEAVE.
-    -- While a dungeon is running, Tower and Boss are paused.
+    -- While a dungeon is running, Boss are paused.
     --  * when the raid opens (Auto Raid ON, window open, raid not done yet) the dungeon is LEFT and not restarted
     --  * once the raid is over the dungeon starts again by itself
     -- The remotes of the game are not known: every server event of a *dungeon* remote is printed in F9
     -- ("dungeon: server event ...") so the CFG.DUNGEON_* settings can be adjusted if the auto-detection is wrong.
     do
+        featureTab("Auto Dungeon", 676)
         label("Auto Dungeon", 676, ORANGE)
         local statusL = label("Dungeon: idle", 696)
         local startBtn = button("Start now", 10, 722, 105, 28, BLUE)
@@ -3139,7 +2972,6 @@ local function runHub()
             task.spawn(function()
                 task.wait(1.5)
                 if Raid.running or Dungeon.active then return end
-                if Tower.auto and Tower.resume then Tower.resume() end
                 if Boss.auto and Boss.resume then Boss.resume() end
             end)
         end
@@ -3438,7 +3270,7 @@ local function runHub()
         -- ---- one dungeon run ----
         local function runOnce()
             if Dungeon.active or Raid.running then return end
-            Dungeon.active = true -- from now on Tower and Boss leave the player alone
+            Dungeon.active = true -- from now on Boss leave the player alone
             Dungeon.startedAt = os.clock()
             if Raid.running then
                 Dungeon.active = false
@@ -3472,7 +3304,6 @@ local function runHub()
                     closeDungeonDialog()
                     print("[PibbleHub] dungeon: could not start. Look at the 'dungeon: server event' / 'buttons after talking' lines,"
                         .. " then set CFG.DUNGEON_START_REMOTE / CFG.DUNGEON_ARGS.")
-                    if Tower.auto and Tower.resume then Tower.resume() end
                     if Boss.auto and Boss.resume then Boss.resume() end
                 end
             end
@@ -3553,14 +3384,13 @@ local function runHub()
     -- =====================================================================
     -- == 12. BATTLEEND ROUTER + RESTORE OF THE SAVED SWITCHES
     -- =====================================================================
-    -- 1) a raid fight  2) a boss fight started by Auto Boss  3) a dungeon fight  4) the Infinite Tower  5) the Halloween Tower
+    -- 1) a raid fight  2) a boss fight started by Auto Boss  3) a dungeon fight  4) the Infinite Tower
     Remotes.BattleEnd.OnClientEvent:Connect(function(data)
         if type(data) ~= "table" then return end
         if Raid.onBattleEnd(data) then return end
         if Boss.onBattleEnd(data) then return end
         if Dungeon.onBattleEnd(data) then return end
         if Infinite.onBattleEnd(data) then return end
-        Tower.onBattleEnd(data)
     end)
 
     -- Restore the Auto / Pop switches a few seconds after launch (the game needs to be loaded),
@@ -3569,7 +3399,6 @@ local function runHub()
     task.delay(CFG.RESTORE_DELAY, function()
         if not gui.Parent then return end
         local d = Settings.data
-        if d.autoTower == true and not Tower.auto then Tower.startAuto() end
         if d.autoBoss == true and not Boss.auto then Boss.setAuto(true) end
         if d.autoRaid == true and not Raid.auto then Raid.setAuto(true) end
         if d.autoDungeon == true and not Dungeon.auto then Dungeon.setAuto(true) end
