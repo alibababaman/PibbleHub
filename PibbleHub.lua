@@ -752,22 +752,21 @@ local function runHub()
         end
 
 
-        menu.Size = UDim2.fromOffset(230, 438)
-        menu.Position = UDim2.fromOffset(10, 320)
-        status.Position = UDim2.fromOffset(10, 402)
+        menu.Size = UDim2.fromOffset(230, 472)
+        menu.Position = UDim2.fromOffset(10, 280)
+        status.Position = UDim2.fromOffset(10, 440)
         local busy = false
 
         local portalChoices = {
             {label = "Clover Kingdom", item = "clover_kingdom", world = "BlackCloverWorld"},
             {label = "Dressrosa", item = "dressrosa", world = "Dressrosa"},
             {label = "Isekai", item = "isekai", world = "Isekai"},
-            {label = "Isekai Nightmare", item = "isekai_nightmare", world = "Isekai"},
             {label = "Leaf Village", item = "leaf_village", world = "Leaf Village"},
             {label = "Namek", item = "namek", world = "Namek"},
             {label = "Shibuya", item = "shibuya", world = "Shibuya"},
             {label = "Soul Society", item = "soul_society", world = "Soul Society"},
-            {label = "Soul Society Nightmare", item = "soul_society_nightmare", world = "Soul Society"},
             {label = "Train to Kyoto", item = "train_to_kyoto", world = "Train to Kyoto"},
+            {label = "Hellsing Mansion", item = "hellsing_mansion", world = "Hellsing Mansion"},
         }
         local selectedPortal
 
@@ -827,6 +826,70 @@ local function runHub()
             return closest
         end
 
+        local function portalAutoFight()
+            local pg = player:FindFirstChildOfClass("PlayerGui")
+            if not pg then return nil end
+            for _, title in ipairs(pg:GetDescendants()) do
+                if not title:IsDescendantOf(gui) and btnText(title) == "auto fight" and shown(title) then
+                    local row = title.Parent
+                    while row and row ~= pg and not row:IsA("LayerCollector") do
+                        local off = visibleButtonIn(row, "off")
+                        local on = visibleButtonIn(row, "on")
+                        if off and not on then return false, off, true end
+                        if on and not off then return true, nil, true end
+                        if off or on then break end
+                        row = row.Parent
+                    end
+                    return nil, nil, true
+                end
+            end
+            return nil
+        end
+
+
+        local function joinPortal(gate, shouldContinue, walkSeconds)
+            local humanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+            if not humanoid then
+                status.Text = "Character unavailable"
+                return
+            end
+            status.Text = "Walking into portal..."
+            local destination = gate.Position
+            local root = getHRP()
+            if walkSeconds and root then
+                local offset = destination - root.Position
+                local direction = Vector3.new(offset.X, 0, offset.Z)
+                if direction.Magnitude < 0.1 then direction = root.CFrame.LookVector end
+                destination = destination + direction.Unit * humanoid.WalkSpeed * walkSeconds
+            end
+            humanoid:MoveTo(destination)
+
+            local deadline = os.clock() + 20
+            local stopWalkingAt = walkSeconds and os.clock() + walkSeconds
+            local requested = false
+            repeat
+                if stopWalkingAt and os.clock() >= stopWalkingAt then
+                    local root = getHRP()
+                    if root then humanoid:MoveTo(root.Position) end
+                    stopWalkingAt = nil
+                end
+                if shouldContinue and not shouldContinue() then
+                    local root = getHRP()
+                    if root then humanoid:MoveTo(root.Position) end
+                    return
+                end
+                local enabled, toggle = portalAutoFight()
+                if enabled then
+                    status.Text = "Portal Auto Fight is on"
+                    return
+                end
+                if toggle and not requested then requested = activateButton(toggle) end
+                task.wait(0.25)
+            until not gui.Parent or os.clock() >= deadline
+            status.Text = requested and "Auto Fight did not show ON" or "Portal entry not confirmed"
+        end
+
+
         local function useSelectedPortal()
             if busy or not selectedPortal then return end
             busy = true
@@ -878,6 +941,11 @@ local function runHub()
             end
 
             status.Text = "Waiting for " .. choice.label .. " portal..."
+            task.wait(2)
+            if not gui.Parent then
+                busy = false
+                return
+            end
             local gate
             deadline = os.clock() + 8
             repeat
@@ -890,47 +958,87 @@ local function runHub()
                 return
             end
 
-            local humanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
-            if not humanoid then
-                status.Text = "Character unavailable"
-                busy = false
-                return
-            end
-            status.Text = "Walking into " .. choice.label .. " portal..."
-            humanoid:MoveTo(gate.Position)
-            deadline = os.clock() + 20
-            repeat
-                task.wait(0.25)
-                root = getHRP()
-            until not root or (root.Position - gate.Position).Magnitude <= 6 or os.clock() >= deadline
-            status.Text = root and (root.Position - gate.Position).Magnitude <= 6
-                and "Reached the portal" or "Could not reach the portal"
+            joinPortal(gate, nil, 2)
             busy = false
         end
 
-        for index, choice in ipairs(portalChoices) do
-            local portalChoice = choice
-            local column = (index - 1) % 2
-            local row = math.floor((index - 1) / 2)
-            local portalButton = button("☐ " .. portalChoice.label, 8 + column * 108,
-                126 + row * 30, 106, 26, DARK, menu, 21)
-            portalButton:SetAttribute("PortalChoice", true)
-            portalButton:SetAttribute("PortalLabel", portalChoice.label)
-            portalButton.Activated:Connect(function()
-                if busy then return end
-                selectedPortal = portalChoice
-                for _, child in ipairs(menu:GetChildren()) do
-                    if child:IsA("TextButton") and child:GetAttribute("PortalChoice") then
-                        child.Text = child == portalButton and ("☑ " .. portalChoice.label)
-                            or ("☐ " .. child:GetAttribute("PortalLabel"))
+        local choiceButtons = {}
+        for index, world in ipairs(portalChoices) do
+            local y = 126 + (index - 1) * 27
+            local worldLabel = label(world.label, y + 3, nil, 12)
+            worldLabel.Parent = menu
+            worldLabel.Size = UDim2.fromOffset(84, 20)
+            worldLabel.ZIndex = 21
+
+            for column, difficulty in ipairs({"Normal", "Nightmare"}) do
+                local choice = {
+                    label = world.label .. " " .. difficulty,
+                    item = world.item .. (difficulty == "Nightmare" and "_nightmare" or ""),
+                    world = world.world,
+                }
+                local portalButton = button("☐ " .. difficulty, 92 + (column - 1) * 65,
+                    y, 64, 26, DARK, menu, 21)
+                portalButton.TextSize = 11
+                choiceButtons[portalButton] = difficulty
+                portalButton.Activated:Connect(function()
+                    if busy then return end
+                    selectedPortal = choice
+                    for control, name in pairs(choiceButtons) do
+                        control.Text = (control == portalButton and "☑ " or "☐ ") .. name
                     end
-                end
-                status.Text = "Selected " .. portalChoice.label
-            end)
+                    status.Text = "Selected " .. choice.label
+                end)
+            end
         end
 
-        local useSelectedBtn = button("Use Selected Portal", 8, 286, 214, 28, GREEN, menu, 21)
+        local useSelectedBtn = button("Auto Create Portal", 8, 376, 214, 28, GREEN, menu, 21)
         useSelectedBtn.Activated:Connect(useSelectedPortal)
+
+        local autoJoin = false
+        local attempted = setmetatable({}, {__mode = "k"})
+        local autoJoinBtn = button("Auto Join Portal: OFF", 8, 408, 214, 26, DARK, menu, 21)
+        autoJoinBtn.Activated:Connect(function()
+            autoJoin = not autoJoin
+            autoJoinBtn.Text = autoJoin and "Auto Join Portal: ON" or "Auto Join Portal: OFF"
+            autoJoinBtn.BackgroundColor3 = autoJoin and GREEN or DARK
+        end)
+
+        task.spawn(function()
+            while gui.Parent do
+                if autoJoin and not busy and not Raid.running and not Boss.active
+                    and not Tower.auto and not Dungeon.active then
+                    local _, _, inPortal = portalAutoFight()
+                    local gates = workspace:FindFirstChild("PortalModeGates")
+                    local root = getHRP()
+                    if not inPortal and gates and root then
+                        local closestGate, closestPart
+                        local closestDistance = math.huge
+                        for _, gate in ipairs(gates:GetChildren()) do
+                            if not attempted[gate] or os.clock() >= attempted[gate] then
+                                local part = gate:IsA("BasePart") and gate
+                                    or (gate:IsA("Model") and gate.PrimaryPart)
+                                    or gate:FindFirstChildWhichIsA("BasePart", true)
+                                if part then
+                                    local distance = (part.Position - root.Position).Magnitude
+                                    if distance < closestDistance then
+                                        closestGate, closestPart, closestDistance = gate, part, distance
+                                    end
+                                end
+                            end
+                        end
+                        if closestGate then
+                            busy = true
+                            joinPortal(closestPart, function() return autoJoin end, 2)
+                            attempted[closestGate] = os.clock() + 45
+                            busy = false
+                        end
+                    end
+                end
+                task.wait(1)
+            end
+        end)
+
+
 
         openBtn.Activated:Connect(function() menu.Visible = not menu.Visible end)
         for i, name in ipairs(destinations) do
