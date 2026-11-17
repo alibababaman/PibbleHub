@@ -752,10 +752,24 @@ local function runHub()
         end
 
 
-        menu.Size = UDim2.fromOffset(230, 414)
-        menu.Position = UDim2.fromOffset(10, 340)
-        status.Position = UDim2.fromOffset(10, 386)
+        menu.Size = UDim2.fromOffset(230, 438)
+        menu.Position = UDim2.fromOffset(10, 320)
+        status.Position = UDim2.fromOffset(10, 402)
         local busy = false
+
+        local portalChoices = {
+            {label = "Clover Kingdom", item = "clover_kingdom", world = "BlackCloverWorld"},
+            {label = "Dressrosa", item = "dressrosa", world = "Dressrosa"},
+            {label = "Isekai", item = "isekai", world = "Isekai"},
+            {label = "Isekai Nightmare", item = "isekai_nightmare", world = "Isekai"},
+            {label = "Leaf Village", item = "leaf_village", world = "Leaf Village"},
+            {label = "Namek", item = "namek", world = "Namek"},
+            {label = "Shibuya", item = "shibuya", world = "Shibuya"},
+            {label = "Soul Society", item = "soul_society", world = "Soul Society"},
+            {label = "Soul Society Nightmare", item = "soul_society_nightmare", world = "Soul Society"},
+            {label = "Train to Kyoto", item = "train_to_kyoto", world = "Train to Kyoto"},
+        }
+        local selectedPortal
 
         local function findPortalItem(itemName)
             local pg = player:FindFirstChildOfClass("PlayerGui")
@@ -766,6 +780,7 @@ local function runHub()
                     if control and shown(control) then return control end
                 end
             end
+            return nil
         end
 
         local function visibleButtonIn(root, name)
@@ -776,12 +791,47 @@ local function runHub()
                     if control and shown(control) then return control end
                 end
             end
+            return nil
         end
 
-        local function useWorldPortal(worldName, worldId)
-            if busy then return end
+        local function portalGateSnapshot()
+            local seen = {}
+            for _, folderName in ipairs({"PortalModeGates", "PortalModeArenas"}) do
+                local folder = workspace:FindFirstChild(folderName)
+                if folder then
+                    for _, instance in ipairs(folder:GetDescendants()) do
+                        seen[instance] = true
+                    end
+                end
+            end
+            return seen
+        end
+
+        local function findNewPortal(snapshot)
+            local root = getHRP()
+            if not root then return nil end
+            local closest, closestDistance = nil, math.huge
+            for _, folderName in ipairs({"PortalModeGates", "PortalModeArenas"}) do
+                local folder = workspace:FindFirstChild(folderName)
+                if folder then
+                    for _, instance in ipairs(folder:GetDescendants()) do
+                        if not snapshot[instance] and instance:IsA("BasePart") then
+                            local distance = (instance.Position - root.Position).Magnitude
+                            if distance < closestDistance then
+                                closest, closestDistance = instance, distance
+                            end
+                        end
+                    end
+                end
+            end
+            return closest
+        end
+
+        local function useSelectedPortal()
+            if busy or not selectedPortal then return end
             busy = true
-            status.Text = "Teleporting to " .. worldName .. "..."
+            local choice = selectedPortal
+            status.Text = "Teleporting to " .. choice.label .. "..."
             local root = getHRP()
             if not root then
                 status.Text = "Character unavailable"
@@ -789,8 +839,8 @@ local function runHub()
                 return
             end
             local origin = root.Position
-            if not Worlds.go(worldName) then
-                status.Text = "Could not teleport to " .. worldName
+            if not Worlds.go(choice.world) then
+                status.Text = "Could not teleport to " .. choice.label
                 busy = false
                 return
             end
@@ -801,20 +851,20 @@ local function runHub()
                 root = getHRP()
             until (root and (root.Position - origin).Magnitude >= 25) or os.clock() >= deadline
             if not root or (root.Position - origin).Magnitude < 25 then
-                status.Text = worldName .. " arrival timed out"
+                status.Text = choice.label .. " arrival timed out"
                 busy = false
                 return
             end
 
-            status.Text = "Finding " .. worldName .. " Portal..."
-            local pg = player:FindFirstChildOfClass("PlayerGui")
-            local item = findPortalItem("Item_portal_" .. worldId)
+            local gateSnapshot = portalGateSnapshot()
+            local item = findPortalItem("Item_portal_" .. choice.item)
             if not item or not activateButton(item) then
-                status.Text = worldName .. " portal item not visible in inventory"
+                status.Text = choice.label .. " portal is not visible in inventory"
                 busy = false
                 return
             end
 
+            local pg = player:FindFirstChildOfClass("PlayerGui")
             local useButton
             deadline = os.clock() + 5
             repeat
@@ -822,39 +872,65 @@ local function runHub()
                 if pg then useButton = visibleButtonIn(pg, "use") end
             until useButton or os.clock() >= deadline
             if not useButton or not activateButton(useButton) then
-                status.Text = worldName .. " Portal Use button not found"
+                status.Text = choice.label .. " portal Use button not found"
                 busy = false
                 return
             end
 
-            status.Text = "Portal opened. Waiting to join..."
-            local joinButton
+            status.Text = "Waiting for " .. choice.label .. " portal..."
+            local gate
             deadline = os.clock() + 8
             repeat
                 task.wait(0.2)
-                if pg then
-                    joinButton = visibleButtonIn(pg, "join")
-                        or visibleButtonIn(pg, "start")
-                end
-            until joinButton or os.clock() >= deadline
-
-            if joinButton and activateButton(joinButton) then
-                status.Text = "Joined " .. worldName .. " portal"
-            else
-                status.Text = "Portal opened. Join or Start button not found"
+                gate = findNewPortal(gateSnapshot)
+            until gate or os.clock() >= deadline
+            if not gate then
+                status.Text = "Portal spawned, but its gate was not found"
+                busy = false
+                return
             end
+
+            local humanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+            if not humanoid then
+                status.Text = "Character unavailable"
+                busy = false
+                return
+            end
+            status.Text = "Walking into " .. choice.label .. " portal..."
+            humanoid:MoveTo(gate.Position)
+            deadline = os.clock() + 20
+            repeat
+                task.wait(0.25)
+                root = getHRP()
+            until not root or (root.Position - gate.Position).Magnitude <= 6 or os.clock() >= deadline
+            status.Text = root and (root.Position - gate.Position).Magnitude <= 6
+                and "Reached the portal" or "Could not reach the portal"
             busy = false
         end
 
-        for index, world in ipairs(BOSS_WORLDS) do
-            local worldName = world[1]
-            local worldId = worldName:lower():gsub("[^%w]+", "_"):gsub("^_+", ""):gsub("_+$", "")
-            local portalButton = button("Use " .. worldName .. " Portal", 8, 126 + (index - 1) * 30,
-                214, 26, GREEN, menu, 21)
+        for index, choice in ipairs(portalChoices) do
+            local portalChoice = choice
+            local column = (index - 1) % 2
+            local row = math.floor((index - 1) / 2)
+            local portalButton = button("☐ " .. portalChoice.label, 8 + column * 108,
+                126 + row * 30, 106, 26, DARK, menu, 21)
+            portalButton:SetAttribute("PortalChoice", true)
+            portalButton:SetAttribute("PortalLabel", portalChoice.label)
             portalButton.Activated:Connect(function()
-                useWorldPortal(worldName, worldId)
+                if busy then return end
+                selectedPortal = portalChoice
+                for _, child in ipairs(menu:GetChildren()) do
+                    if child:IsA("TextButton") and child:GetAttribute("PortalChoice") then
+                        child.Text = child == portalButton and ("☑ " .. portalChoice.label)
+                            or ("☐ " .. child:GetAttribute("PortalLabel"))
+                    end
+                end
+                status.Text = "Selected " .. portalChoice.label
             end)
         end
+
+        local useSelectedBtn = button("Use Selected Portal", 8, 286, 214, 28, GREEN, menu, 21)
+        useSelectedBtn.Activated:Connect(useSelectedPortal)
 
         openBtn.Activated:Connect(function() menu.Visible = not menu.Visible end)
         for i, name in ipairs(destinations) do
