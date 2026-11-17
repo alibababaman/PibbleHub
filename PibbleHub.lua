@@ -821,6 +821,42 @@ local function runHub()
             return nil
         end
 
+        local function inventoryIsOpen(inventory)
+            local frame = inventory and inventory:FindFirstChild("ItemFrame")
+            return frame and shown(frame)
+        end
+
+        local function inventoryControl(scope, names, caption)
+            for _, control in ipairs(scope:GetDescendants()) do
+                if control:IsA("GuiButton") and shown(control) and not control:IsDescendantOf(gui) then
+                    local name = control.Name:lower():gsub("[^%w]", "")
+                    if names[name] then return control end
+                end
+            end
+            return visibleButtonIn(scope, caption)
+        end
+
+        local function openInventory()
+            if inventoryIsOpen(getInventory()) then return end
+            local playerGui = player:FindFirstChildOfClass("PlayerGui")
+            if not playerGui then return end
+            local opener = inventoryControl(playerGui, {
+                inventory = true, inventorybutton = true, inventorybtn = true,
+                itembutton = true, itembtn = true, openinventory = true,
+            }, "inventory")
+            if opener then activateButton(opener) end
+        end
+
+        local function closeInventory()
+            local inventory = getInventory()
+            if not inventoryIsOpen(inventory) then return end
+            local closer = inventoryControl(inventory, {
+                close = true, closebutton = true, closebtn = true, closeinventory = true,
+            }, "x") or visibleButtonIn(inventory, "close")
+            if closer then activateButton(closer) end
+        end
+
+
         local function portalGateSnapshot()
             local seen = {}
             for _, folderName in ipairs({"PortalModeGates", "PortalModeArenas"}) do
@@ -921,34 +957,67 @@ local function runHub()
         local autoCreate = false
         local function creatingPortal() return autoCreate and gui.Parent ~= nil end
 
-        local function createPortal(choice)
-            status.Text = "Teleporting to " .. choice.label .. "..."
+        local function portalWorldKey(value)
+            if type(value) ~= "string" or value == "" then return nil end
+            local key = value:lower():gsub("^world_", ""):gsub("[^%w]", "")
+            for _, choice in ipairs(portalChoices) do
+                if key == choice.world:lower():gsub("[^%w]", "")
+                    or key == choice.label:lower():gsub("[^%w]", "") then
+                    return choice.world, choice.world
+                end
+            end
+            return key
+        end
+
+        local function enterPortalWorld(world, shouldContinue)
+            if not shouldContinue() then return false end
+            if portalWorldKey(player:GetAttribute("CurrentWorld") or player:GetAttribute("WorldId"))
+                == portalWorldKey(world) then return true end
+
             local root = getHRP()
-            if not root then
-                status.Text = "Character unavailable"
-                return
-            end
+            if not root then return false end
             local origin = root.Position
-            if not Worlds.go(choice.world) then
-                status.Text = "Could not teleport to " .. choice.label
-                return
-            end
+            status.Text = "Teleporting to " .. world .. "..."
+            if not Worlds.go(world) then return false end
 
             local deadline = os.clock() + 15
             repeat
-                task.wait(0.2)
+                if not shouldContinue() then return false end
                 root = getHRP()
-            until not creatingPortal() or (root and (root.Position - origin).Magnitude >= 25) or os.clock() >= deadline
-            if not creatingPortal() then return end
-            if not root or (root.Position - origin).Magnitude < 25 then
-                status.Text = choice.label .. " arrival timed out"
+                local current = portalWorldKey(player:GetAttribute("CurrentWorld") or player:GetAttribute("WorldId"))
+                if current == portalWorldKey(world)
+                    or (not current and root and (root.Position - origin).Magnitude >= 25) then
+                    task.wait(2)
+                    return shouldContinue()
+                end
+                task.wait(0.2)
+            until os.clock() >= deadline
+            status.Text = world .. " arrival timed out"
+            return false
+        end
+
+
+        local function createPortal(choice)
+            if not enterPortalWorld(choice.world, creatingPortal) then return end
+            local deadline
+            local gateSnapshot = portalGateSnapshot()
+            status.Text = "Loading inventory..."
+            openInventory()
+            local inventory, item
+            deadline = os.clock() + 6
+            repeat
+                inventory = getInventory()
+                if inventoryIsOpen(inventory) then
+                    item = findPortalItem(inventory, "Item_portal_" .. choice.item)
+                end
+                if not item then task.wait(0.2) end
+            until not creatingPortal() or item or os.clock() >= deadline
+            if not creatingPortal() then
+                closeInventory()
                 return
             end
-
-            local gateSnapshot = portalGateSnapshot()
-            local inventory = getInventory()
-            local item = findPortalItem(inventory, "Item_portal_" .. choice.item)
             if not item or not activateButton(item) then
+                closeInventory()
                 status.Text = choice.label .. " portal is not visible in inventory"
                 return
             end
@@ -960,8 +1029,10 @@ local function runHub()
                 inventory = getInventory()
                 if inventory then useButton = visibleButtonIn(inventory, "use") end
             until not creatingPortal() or useButton or os.clock() >= deadline
+            local used = creatingPortal() and useButton and activateButton(useButton)
+            closeInventory()
             if not creatingPortal() then return end
-            if not useButton or not activateButton(useButton) then
+            if not used then
                 status.Text = choice.label .. " portal Use button not found"
                 return
             end
@@ -1099,7 +1170,22 @@ local function runHub()
                         end
                         if closestGate then
                             busy = true
-                            joinPortal(closestPart, function() return autoJoin end, 2)
+                            local function joiningPortal() return autoJoin and gui.Parent ~= nil end
+                            local gateWorld = closestGate:GetAttribute("WorldId") or closestGate:GetAttribute("World")
+                                or closestPart:GetAttribute("WorldId") or closestPart:GetAttribute("World")
+                            local currentWorld = player:GetAttribute("CurrentWorld") or player:GetAttribute("WorldId")
+                            if type(gateWorld) == "string" and gateWorld ~= "" then
+                                local alreadyNearby = not currentWorld and closestDistance <= 25
+                                if not alreadyNearby and portalWorldKey(gateWorld) ~= portalWorldKey(currentWorld) then
+                                    local _, destination = portalWorldKey(gateWorld)
+                                    if not enterPortalWorld(destination or gateWorld, joiningPortal) then
+                                        closestPart = nil
+                                    end
+                                end
+                            end
+                            if joiningPortal() and closestPart and closestPart:IsDescendantOf(workspace) then
+                                joinPortal(closestPart, joiningPortal, 2)
+                            end
                             attempted[closestGate] = os.clock() + 45
                             busy = false
                         end
