@@ -1158,7 +1158,8 @@ local function runHub()
 
             if not joinPortal(gate, creatingPortal, 2, true) then return false end
             status.Text = "Portal running..."
-            return waitForPortalResults(creatingPortal)
+            if not waitForPortalResults(creatingPortal) then return false end
+            return enterPortalWorld("Lobby", creatingPortal)
         end
 
         local choices = {}
@@ -1222,16 +1223,25 @@ local function runHub()
             busy = true
             autoCreate = true
             useSelectedBtn.Text = "Auto Create: ON"
-            for _, choice in ipairs(choices) do
-                if not creatingPortal() then break end
-                if selectedPortals[choice] then
-                    local _, _, inPortal = portalAutoFight()
-                    while creatingPortal() and inPortal do
-                        task.wait(1)
-                        _, _, inPortal = portalAutoFight()
+            while creatingPortal() do
+                local failed = false
+                for _, choice in ipairs(choices) do
+                    if not creatingPortal() then break end
+                    if selectedPortals[choice] then
+                        local _, _, inPortal = portalAutoFight()
+                        while creatingPortal() and inPortal do
+                            task.wait(1)
+                            _, _, inPortal = portalAutoFight()
+                        end
+                        if not creatingPortal() then break end
+                        if createPortal(choice) == false then
+                            failed = true
+                            break
+                        end
                     end
-                    if not creatingPortal() or createPortal(choice) == false then break end
                 end
+                if failed then break end
+                task.wait(2)
             end
             autoCreate = false
             useSelectedBtn.Text = "Auto Create: OFF"
@@ -1287,7 +1297,13 @@ local function runHub()
                             end
                             if joiningPortal() and closestPart and closestPart:IsDescendantOf(workspace) then
                                 if joinPortal(closestPart, joiningPortal, 2) then
-                                    waitForPortalResults(joiningPortal)
+                                    if waitForPortalResults(joiningPortal) then
+                                        if not enterPortalWorld("Lobby", joiningPortal) then
+                                            autoJoin = false
+                                            autoJoinBtn.Text = "Auto Join Portal: OFF"
+                                            autoJoinBtn.BackgroundColor3 = DARK
+                                        end
+                                    end
                                 end
                             end
                             attempted[closestGate] = os.clock() + 45
