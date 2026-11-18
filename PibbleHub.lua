@@ -937,6 +937,60 @@ local function runHub()
         end
 
 
+        local function portalResults()
+            local pg = player:FindFirstChildOfClass("PlayerGui")
+            if not pg then return nil end
+            for _, title in ipairs(pg:GetDescendants()) do
+                if not title:IsDescendantOf(gui) and shown(title) and btnText(title) == "out of lives" then
+                    local panel = title.Parent
+                    while panel and not panel:IsA("LayerCollector") do
+                        local continueButton = visibleButtonIn(panel, "continue")
+                        if continueButton then
+                            local isPortal = false
+                            for _, text in ipairs(panel:GetDescendants()) do
+                                if (text:IsA("TextLabel") or text:IsA("TextButton"))
+                                    and shown(text) and btnText(text):find("portal", 1, true) then
+                                    isPortal = true
+                                    break
+                                end
+                            end
+                            if isPortal then return continueButton end
+                        end
+                        panel = panel.Parent
+                    end
+                end
+            end
+            return nil
+        end
+
+        local function waitForPortalResults(shouldContinue)
+            local lastClick = -math.huge
+            local closing = false
+            local closeStarted
+            while gui.Parent and shouldContinue() do
+                local continueButton = portalResults()
+                if continueButton then
+                    closing = true
+                    closeStarted = closeStarted or os.clock()
+                    status.Text = "Closing portal results..."
+                    if os.clock() - lastClick >= 2 then
+                        lastClick = os.clock()
+                        clickPortalControl(continueButton)
+                    end
+                    if os.clock() - closeStarted >= 15 then
+                        status.Text = "Could not close portal results"
+                        return false
+                    end
+                elseif closing then
+                    task.wait(1)
+                    if not portalResults() then return shouldContinue() end
+                end
+                task.wait(0.25)
+            end
+            return false
+        end
+
+
         local function joinPortal(gate, shouldContinue, walkSeconds, startRun)
             local humanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
             if not humanoid then
@@ -974,14 +1028,14 @@ local function runHub()
                     startButton, waitingRoom = portalWaitingRoom()
                     if startRequested and not waitingRoom then
                         status.Text = "Waiting Room closed after Start"
-                        return
+                        return true
                     end
                 end
                 local enabled, toggle = portalAutoFight()
                 if enabled then
                     if not startRun then
                         status.Text = "Portal Auto Fight is on"
-                        return
+                        return true
                     end
                     if startButton and not startRequested then
                         startRequested = clickPortalControl(startButton)
@@ -1102,9 +1156,9 @@ local function runHub()
                 return false
             end
 
-            joinPortal(gate, creatingPortal, 2, true)
-            local _, _, inPortal = portalAutoFight()
-            return inPortal == true
+            if not joinPortal(gate, creatingPortal, 2, true) then return false end
+            status.Text = "Portal running..."
+            return waitForPortalResults(creatingPortal)
         end
 
         local choices = {}
@@ -1232,7 +1286,9 @@ local function runHub()
                                 end
                             end
                             if joiningPortal() and closestPart and closestPart:IsDescendantOf(workspace) then
-                                joinPortal(closestPart, joiningPortal, 2)
+                                if joinPortal(closestPart, joiningPortal, 2) then
+                                    waitForPortalResults(joiningPortal)
+                                end
                             end
                             attempted[closestGate] = os.clock() + 45
                             busy = false
